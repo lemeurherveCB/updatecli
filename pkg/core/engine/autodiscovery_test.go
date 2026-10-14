@@ -10,6 +10,7 @@ import (
 	"github.com/updatecli/updatecli/pkg/core/pipeline/resource"
 	"github.com/updatecli/updatecli/pkg/core/pipeline/scm"
 	"github.com/updatecli/updatecli/pkg/core/pipeline/source"
+	"github.com/updatecli/updatecli/pkg/core/pipeline/target"
 	"github.com/updatecli/updatecli/pkg/plugins/resources/updateclihttp"
 	githubscm "github.com/updatecli/updatecli/pkg/plugins/scms/github"
 )
@@ -235,6 +236,60 @@ func manifestWithConditionAndSource(conditionValue, sourceName string) config.Sp
 		},
 	}
 	return manifest
+}
+
+// manifestWithTarget extends a manifest with a single target whose "name" and "sourceid"
+// mirror the "helmfile" crawler's own convention, built from releaseName the same way
+// releases.go names its target after the release.
+func manifestWithTarget(manifest config.Spec, releaseName string) config.Spec {
+	manifest.Targets = map[string]target.Config{
+		releaseName: {
+			ResourceConfig: resource.ResourceConfig{
+				Kind: "yaml",
+				Name: fmt.Sprintf(`deps(helmfile): update %q Helm Chart version to {{ source %q}}`, releaseName, releaseName),
+			},
+			SourceID: releaseName,
+		},
+	}
+	return manifest
+}
+
+func TestRewriteHelmfileTargetNames(t *testing.T) {
+	t.Parallel()
+
+	t.Run("replaces the release name with the chart identity, keeping the source reference", func(t *testing.T) {
+		t.Parallel()
+
+		manifest := manifestWithTarget(manifestWithConditionAndSource("jenkins-infra/nginx-website", "nginx-website"), "pkg-origin-jenkins-io")
+
+		rewriteHelmfileTargetNames("helmfile", manifest)
+
+		require.Equal(t,
+			`deps(helmfile): update "jenkins-infra/nginx-website" Helm Chart version to {{ source "pkg-origin-jenkins-io"}}`,
+			manifest.Targets["pkg-origin-jenkins-io"].Name)
+	})
+
+	t.Run("leaves target names untouched for any other crawler", func(t *testing.T) {
+		t.Parallel()
+
+		manifest := manifestWithTarget(manifestWithConditionAndSource("jenkins-infra/nginx-website", "nginx-website"), "pkg-origin-jenkins-io")
+		original := manifest.Targets["pkg-origin-jenkins-io"].Name
+
+		rewriteHelmfileTargetNames("npm", manifest)
+
+		require.Equal(t, original, manifest.Targets["pkg-origin-jenkins-io"].Name)
+	})
+
+	t.Run("leaves target names untouched when there is no chart identity to use", func(t *testing.T) {
+		t.Parallel()
+
+		manifest := manifestWithTarget(newManifestWithSourceSpec(map[string]interface{}{"name": "nginx-website"}, 1), "pkg-origin-jenkins-io")
+		original := manifest.Targets["pkg-origin-jenkins-io"].Name
+
+		rewriteHelmfileTargetNames("helmfile", manifest)
+
+		require.Equal(t, original, manifest.Targets["pkg-origin-jenkins-io"].Name)
+	})
 }
 
 func TestHelmfileChartIdentity(t *testing.T) {

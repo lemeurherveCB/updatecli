@@ -221,6 +221,10 @@ func (e *Engine) LoadAutoDiscovery(ctx context.Context, defaultEnabled bool) err
 					manifest.PipelineID = fmt.Sprintf("%x", hash.Sum(nil))
 				}
 
+				if p.Config.Spec.AutoDiscovery.GroupBy == autodiscovery.GROUPBYRESOURCE {
+					rewriteHelmfileTargetNames(crawlerResult.Kind, manifest)
+				}
+
 				if manifest.ID == "" {
 					manifest.ID = p.Config.Spec.ID
 				}
@@ -484,6 +488,28 @@ func helmfileChartIdentity(manifest config.Spec) (string, bool) {
 
 	// unreachable: the len(manifest.Conditions) == 1 check above guarantees exactly one iteration
 	return "", false
+}
+
+// rewriteHelmfileTargetNames replaces the release name a "helmfile" crawler's generated
+// target "name" displays with the chart identity (e.g. "jenkins-infra/rsyncd"), used with
+// "groupby: resource" so that a commit message doesn't single out an arbitrary release for a
+// change that updates every release of that chart - the same reason manifestResourceTitle
+// overrides the pull request title. The "{{ source \"id\" }}" reference is rebuilt from the
+// target's own sourceid, so it keeps pointing at this manifest's own source.
+func rewriteHelmfileTargetNames(crawlerKind string, manifest config.Spec) {
+	if crawlerKind != "helmfile" {
+		return
+	}
+
+	identity, ok := helmfileChartIdentity(manifest)
+	if !ok {
+		return
+	}
+
+	for id, tgt := range manifest.Targets {
+		tgt.Name = fmt.Sprintf(`deps(helmfile): update %q Helm Chart version to {{ source %q}}`, identity, tgt.SourceID)
+		manifest.Targets[id] = tgt
+	}
 }
 
 // manifestResourceTitle returns a human-readable, stable title fragment for a discovered
