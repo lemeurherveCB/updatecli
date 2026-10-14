@@ -15,7 +15,17 @@ type Config struct {
 	*/
 	ActionId string `yaml:",omitempty"`
 	/*
-		groupby specifies how to group pipeline. The Accepted is one of "all", "individual". Default is "all"
+		groupby specifies how to group pipeline. The Accepted is one of "all", "individual", "resource". Default is "all"
+
+		remark:
+			* "all" generates a single pipeline for all discovered manifests, opening a single pull request.
+			* "individual" generates one pipeline per discovered manifest, opening one pull request per manifest.
+			* "resource" generates one pipeline per discovered resource, where a resource is the dependency a
+			  manifest tracks (e.g. a Helm chart, a Maven artifact, an npm package, a container image). Every
+			  manifest tracking the same resource, however many times or files it was discovered in, is routed
+			  to the same pipeline and opens a single pull request for that resource. A manifest discovered
+			  with more than one source falls back to the "individual" behavior, since it has no single
+			  resource identity to group by.
 
 		default:
 			all

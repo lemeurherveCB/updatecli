@@ -186,6 +186,31 @@ func (e *Engine) LoadAutoDiscovery(ctx context.Context, defaultEnabled bool) err
 						logrus.Errorln(err)
 					}
 					manifest.PipelineID = fmt.Sprintf("%x", hash.Sum(nil))
+				case autodiscovery.GROUPBYRESOURCE:
+					/*
+						"resource" groups discovered manifests by the identity of the single
+						resource (dependency) they track, e.g. the same Helm chart, Maven
+						artifact, npm package or container image, however many times or files
+						it was discovered in. Every manifest tracking the same resource lands
+						on the same pipelineid/branch, so they end up on the same pull request.
+
+						A manifest discovered with more than one source has no single resource
+						identity to group by, so it falls back to the uniq-per-manifest
+						behavior of "individual".
+					*/
+					groupKey, ok := manifestResourceIdentity(manifest)
+					if !ok {
+						groupKey = manifest.Name
+						logrus.Debugf("autodiscovery groupby %q: could not determine a single resource identity for manifest %q, falling back to grouping it individually",
+							autodiscovery.GROUPBYRESOURCE, manifest.Name)
+					}
+
+					hash := sha256.New()
+					_, err := io.WriteString(hash, p.Config.Spec.PipelineID+"/"+groupKey)
+					if err != nil {
+						logrus.Errorln(err)
+					}
+					manifest.PipelineID = fmt.Sprintf("%x", hash.Sum(nil))
 				}
 
 				if manifest.ID == "" {
@@ -315,6 +340,43 @@ func (e *Engine) LoadAutoDiscovery(ctx context.Context, defaultEnabled bool) err
 	}
 
 	return nil
+}
+
+// manifestResourceIdentity returns a stable identity for the single resource (dependency) a
+// discovered manifest tracks, used to group pipelines with "groupby: resource". It returns
+// ok=false when the manifest does not have exactly one source, since there is then no single
+// resource identity to group by.
+func manifestResourceIdentity(manifest config.Spec) (string, bool) {
+	if len(manifest.Sources) != 1 {
+		return "", false
+	}
+
+	for _, src := range manifest.Sources {
+		reportConfig, err := resource.GetReportConfig(src.ResourceConfig)
+		if err != nil {
+			return "", false
+		}
+
+		sanitizedResourceConfig, ok := reportConfig.(resource.ResourceConfig)
+		if !ok {
+			return "", false
+		}
+
+		// Only the resource "kind" and "spec" identify the resource being tracked. The
+		// resource's own "name" is a free-form, per-manifest display label (e.g. the helmfile
+		// crawler sets it to the release name) and must not affect the identity, or two
+		// manifests tracking the exact same resource under a different display label would
+		// wrongly be considered distinct resources.
+		data, err := json.Marshal(sanitizedResourceConfig.Spec)
+		if err != nil {
+			return "", false
+		}
+
+		return fmt.Sprintf("%s/%x", src.Kind, sha256.Sum256(data)), true
+	}
+
+	// unreachable: the len(manifest.Sources) == 1 check above guarantees exactly one iteration
+	return "", false
 }
 
 func autodiscoveryManifestFingerprint(manifest config.Spec, pipelineID string) (string, error) {
