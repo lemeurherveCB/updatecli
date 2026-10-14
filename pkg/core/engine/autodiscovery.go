@@ -405,10 +405,32 @@ func manifestResourceIdentity(manifest config.Spec) (string, bool) {
 	return "", false
 }
 
-// manifestResourceName returns the "name" field of a discovered manifest's single source spec,
-// used to build the extra label "autodiscovery.resourcelabelprefix" adds. It returns ok=false
-// when the manifest does not have exactly one source, or that source's spec has no non-empty
-// string "name" field.
+// manifestResourceNameFields lists, in priority order, the single-string spec fields that
+// identify a discovered manifest's resource across the autodiscovery crawlers' various source
+// kinds: a Helm chart, npm package, PyPI package or Terraform module ("name"), or a container
+// image ("image", for "dockerimage"/"dockerdigest").
+var manifestResourceNameFields = []string{"name", "image", "package"}
+
+// mavenResourceName returns "groupid:artifactid" for a "maven" source spec, the closest
+// equivalent to the other source kinds' single identity field.
+func mavenResourceName(specMap map[string]interface{}) (string, bool) {
+	groupID, ok := specMap["groupid"].(string)
+	if !ok || groupID == "" {
+		return "", false
+	}
+
+	artifactID, ok := specMap["artifactid"].(string)
+	if !ok || artifactID == "" {
+		return "", false
+	}
+
+	return fmt.Sprintf("%s:%s", groupID, artifactID), true
+}
+
+// manifestResourceName returns a human-readable identity for a discovered manifest's single
+// source spec, used to build the extra label "autodiscovery.resourcelabelprefix" adds and the
+// pull request title "groupby: resource" sets. It returns ok=false when the manifest does not
+// have exactly one source, or that source's spec matches none of the known identity fields.
 func manifestResourceName(manifest config.Spec) (string, bool) {
 	if len(manifest.Sources) != 1 {
 		return "", false
@@ -420,12 +442,17 @@ func manifestResourceName(manifest config.Spec) (string, bool) {
 			return "", false
 		}
 
-		name, ok := specMap["name"].(string)
-		if !ok || name == "" {
-			return "", false
+		if name, ok := mavenResourceName(specMap); ok {
+			return name, true
 		}
 
-		return name, true
+		for _, field := range manifestResourceNameFields {
+			if name, ok := specMap[field].(string); ok && name != "" {
+				return name, true
+			}
+		}
+
+		return "", false
 	}
 
 	// unreachable: the len(manifest.Sources) == 1 check above guarantees exactly one iteration

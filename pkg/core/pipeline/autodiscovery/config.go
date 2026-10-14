@@ -34,12 +34,15 @@ type Config struct {
 	/*
 		resourcelabelprefix defines an optional prefix prepended to an extra label automatically
 		added to the action of each discovered manifest, in addition to any label already set
-		on that action. The extra label is this prefix, if any, followed by the "name" of the
-		discovered manifest's single resource, e.g. a Helm chart name such as "nginx-website".
+		on that action. The extra label is this prefix, if any, followed by an identity derived
+		from the discovered manifest's single resource, e.g. a Helm chart name such as
+		"nginx-website", a container image such as "jenkins/jenkins", or a Maven artifact such
+		as "org.jenkins-ci.plugins:git".
 
 		remark:
 			* the extra label is added whenever the discovered manifest has exactly one source
-			  and that source's spec has a non-empty "name" field, whether or not
+			  and that source's spec exposes one of the known identity fields ("name", "image",
+			  "package", or Maven's "groupid"/"artifactid" pair), whether or not
 			  "resourcelabelprefix" is set. Otherwise, no extra label is added, and no error is
 			  raised.
 			* this is independent of "groupby": it is especially useful with "groupby:

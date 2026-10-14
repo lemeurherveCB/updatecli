@@ -150,10 +150,52 @@ func TestManifestResourceName(t *testing.T) {
 		require.Equal(t, "nginx-website", name)
 	})
 
-	t.Run("no name when the spec has none", func(t *testing.T) {
+	t.Run("returns the single source spec's image, for dockerimage/dockerdigest sources", func(t *testing.T) {
+		t.Parallel()
+
+		name, ok := manifestResourceName(newManifestWithSourceSpec(map[string]interface{}{"image": "jenkins/jenkins", "tagfilter": "lts"}, 1))
+		require.True(t, ok)
+		require.Equal(t, "jenkins/jenkins", name)
+	})
+
+	t.Run("returns the single source spec's package, for cargopackage sources", func(t *testing.T) {
+		t.Parallel()
+
+		name, ok := manifestResourceName(newManifestWithSourceSpec(map[string]interface{}{"package": "serde"}, 1))
+		require.True(t, ok)
+		require.Equal(t, "serde", name)
+	})
+
+	t.Run("returns groupid:artifactid, for maven sources", func(t *testing.T) {
+		t.Parallel()
+
+		name, ok := manifestResourceName(newManifestWithSourceSpec(map[string]interface{}{"groupid": "org.jenkins-ci.plugins", "artifactid": "git"}, 1))
+		require.True(t, ok)
+		require.Equal(t, "org.jenkins-ci.plugins:git", name)
+	})
+
+	t.Run("prefers name over image when, implausibly, a spec has both", func(t *testing.T) {
+		t.Parallel()
+
+		name, ok := manifestResourceName(newManifestWithSourceSpec(map[string]interface{}{"name": "nginx-website", "image": "jenkins/jenkins"}, 1))
+		require.True(t, ok)
+		require.Equal(t, "nginx-website", name)
+	})
+
+	t.Run("no name when the spec has none of the known identity fields", func(t *testing.T) {
 		t.Parallel()
 
 		_, ok := manifestResourceName(newManifestWithSourceSpec(map[string]interface{}{"url": "https://example.com"}, 1))
+		require.False(t, ok)
+	})
+
+	t.Run("no name for maven when only one of groupid/artifactid is set", func(t *testing.T) {
+		t.Parallel()
+
+		_, ok := manifestResourceName(newManifestWithSourceSpec(map[string]interface{}{"groupid": "org.jenkins-ci.plugins"}, 1))
+		require.False(t, ok)
+
+		_, ok = manifestResourceName(newManifestWithSourceSpec(map[string]interface{}{"artifactid": "git"}, 1))
 		require.False(t, ok)
 	})
 
