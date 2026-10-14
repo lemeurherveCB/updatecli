@@ -31,6 +31,28 @@ type Config struct {
 			all
 	*/
 	GroupBy GroupBy
+	/*
+		resourcelabelprefix defines an optional prefix prepended to an extra label automatically
+		added to the action of each discovered manifest, in addition to any label already set
+		on that action. The extra label is this prefix, if any, followed by the "name" of the
+		discovered manifest's single resource, e.g. a Helm chart name such as "nginx-website".
+
+		remark:
+			* the extra label is added whenever the discovered manifest has exactly one source
+			  and that source's spec has a non-empty "name" field, whether or not
+			  "resourcelabelprefix" is set. Otherwise, no extra label is added, and no error is
+			  raised.
+			* this is independent of "groupby": it is especially useful with "groupby:
+			  resource" to label every pull request with the resource it bumps, but it applies
+			  regardless of the "groupby" value in use.
+
+		example:
+			* resourcelabelprefix unset turns a resource named "nginx-website" into the label
+			  "nginx-website".
+			* resourcelabelprefix: "chart:" turns the same resource into the label
+			  "chart:nginx-website".
+	*/
+	ResourceLabelPrefix string `yaml:",omitempty"`
 	// !Deprecated in favor of `actionid`
 	PullrequestId string `yaml:",omitempty"`
 }

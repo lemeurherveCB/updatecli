@@ -117,6 +117,106 @@ func TestManifestResourceIdentity(t *testing.T) {
 	})
 }
 
+// newManifestWithSourceSpec builds a manifest whose single source spec is a
+// map[string]interface{}, matching the shape a discovered manifest actually has once its
+// generated YAML is unmarshaled into a config.Spec (as opposed to a typed Go resource.Spec
+// struct, which is how other tests in this file build manifests by hand).
+func newManifestWithSourceSpec(spec map[string]interface{}, sourcesCount int) config.Spec {
+	manifest := config.Spec{
+		Name:    "discovered manifest",
+		Sources: map[string]source.Config{},
+	}
+	for i := 0; i < sourcesCount; i++ {
+		manifest.Sources[fmt.Sprintf("source-%d", i)] = source.Config{
+			ResourceConfig: resource.ResourceConfig{
+				Name: "Get latest version",
+				Kind: "helmchart",
+				Spec: spec,
+			},
+		}
+	}
+	return manifest
+}
+
+func TestManifestResourceName(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns the single source spec's name", func(t *testing.T) {
+		t.Parallel()
+
+		name, ok := manifestResourceName(newManifestWithSourceSpec(map[string]interface{}{"name": "nginx-website", "url": "https://example.com"}, 1))
+		require.True(t, ok)
+		require.Equal(t, "nginx-website", name)
+	})
+
+	t.Run("no name when the spec has none", func(t *testing.T) {
+		t.Parallel()
+
+		_, ok := manifestResourceName(newManifestWithSourceSpec(map[string]interface{}{"url": "https://example.com"}, 1))
+		require.False(t, ok)
+	})
+
+	t.Run("no name when the spec's name is empty", func(t *testing.T) {
+		t.Parallel()
+
+		_, ok := manifestResourceName(newManifestWithSourceSpec(map[string]interface{}{"name": ""}, 1))
+		require.False(t, ok)
+	})
+
+	t.Run("no name with zero or more than one source", func(t *testing.T) {
+		t.Parallel()
+
+		spec := map[string]interface{}{"name": "nginx-website"}
+
+		_, ok := manifestResourceName(newManifestWithSourceSpec(spec, 0))
+		require.False(t, ok)
+
+		_, ok = manifestResourceName(newManifestWithSourceSpec(spec, 2))
+		require.False(t, ok)
+	})
+}
+
+func TestAppendActionLabel(t *testing.T) {
+	t.Parallel()
+
+	t.Run("appends to an existing labels list", func(t *testing.T) {
+		t.Parallel()
+
+		spec := map[string]interface{}{"labels": []interface{}{"dependencies"}}
+
+		result := appendActionLabel(spec, "chart:nginx-website")
+
+		require.Equal(t, []interface{}{"dependencies", "chart:nginx-website"}, result.(map[string]interface{})["labels"])
+	})
+
+	t.Run("creates a labels list when there is none", func(t *testing.T) {
+		t.Parallel()
+
+		spec := map[string]interface{}{}
+
+		result := appendActionLabel(spec, "chart:nginx-website")
+
+		require.Equal(t, []interface{}{"chart:nginx-website"}, result.(map[string]interface{})["labels"])
+	})
+
+	t.Run("does not mutate the original spec", func(t *testing.T) {
+		t.Parallel()
+
+		original := map[string]interface{}{"labels": []interface{}{"dependencies"}}
+
+		appendActionLabel(original, "chart:nginx-website")
+
+		require.Equal(t, []interface{}{"dependencies"}, original["labels"])
+	})
+
+	t.Run("returns the spec unchanged when it is not a map", func(t *testing.T) {
+		t.Parallel()
+
+		result := appendActionLabel("not a map", "chart:nginx-website")
+		require.Equal(t, "not a map", result)
+	})
+}
+
 func TestAutodiscoveryManifestFingerprintIgnoresSecrets(t *testing.T) {
 	t.Parallel()
 

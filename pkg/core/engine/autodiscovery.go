@@ -261,6 +261,11 @@ func (e *Engine) LoadAutoDiscovery(ctx context.Context, defaultEnabled bool) err
 					manifestAction := manifest.Actions[p.Config.Spec.AutoDiscovery.ScmId]
 
 					baseAction := *actionConfig
+
+					if name, ok := manifestResourceName(manifest); ok {
+						baseAction.Spec = appendActionLabel(baseAction.Spec, p.Config.Spec.AutoDiscovery.ResourceLabelPrefix+name)
+					}
+
 					if err := mergo.Merge(&baseAction, manifestAction); err != nil {
 						fmt.Println("Error:", err)
 					}
@@ -377,6 +382,56 @@ func manifestResourceIdentity(manifest config.Spec) (string, bool) {
 
 	// unreachable: the len(manifest.Sources) == 1 check above guarantees exactly one iteration
 	return "", false
+}
+
+// manifestResourceName returns the "name" field of a discovered manifest's single source spec,
+// used to build the extra label "autodiscovery.resourcelabelprefix" adds. It returns ok=false
+// when the manifest does not have exactly one source, or that source's spec has no non-empty
+// string "name" field.
+func manifestResourceName(manifest config.Spec) (string, bool) {
+	if len(manifest.Sources) != 1 {
+		return "", false
+	}
+
+	for _, src := range manifest.Sources {
+		specMap, ok := src.Spec.(map[string]interface{})
+		if !ok {
+			return "", false
+		}
+
+		name, ok := specMap["name"].(string)
+		if !ok || name == "" {
+			return "", false
+		}
+
+		return name, true
+	}
+
+	// unreachable: the len(manifest.Sources) == 1 check above guarantees exactly one iteration
+	return "", false
+}
+
+// appendActionLabel returns a copy of an action's spec with label appended to its "labels"
+// list. It never mutates spec in place, since the autodiscovery action config is shared and
+// reused as a template for every manifest the autodiscovery pipeline generates.
+func appendActionLabel(spec interface{}, label string) interface{} {
+	specMap, ok := spec.(map[string]interface{})
+	if !ok {
+		return spec
+	}
+
+	newSpec := make(map[string]interface{}, len(specMap))
+	for k, v := range specMap {
+		newSpec[k] = v
+	}
+
+	existingLabels, _ := specMap["labels"].([]interface{})
+	newLabels := make([]interface{}, 0, len(existingLabels)+1)
+	newLabels = append(newLabels, existingLabels...)
+	newLabels = append(newLabels, label)
+	newSpec["labels"] = newLabels
+
+	return newSpec
 }
 
 func autodiscoveryManifestFingerprint(manifest config.Spec, pipelineID string) (string, error) {
