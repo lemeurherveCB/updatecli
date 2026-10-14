@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/updatecli/updatecli/pkg/core/config"
+	"github.com/updatecli/updatecli/pkg/core/pipeline/condition"
 	"github.com/updatecli/updatecli/pkg/core/pipeline/resource"
 	"github.com/updatecli/updatecli/pkg/core/pipeline/scm"
 	"github.com/updatecli/updatecli/pkg/core/pipeline/source"
@@ -172,6 +173,85 @@ func TestManifestResourceName(t *testing.T) {
 		require.False(t, ok)
 
 		_, ok = manifestResourceName(newManifestWithSourceSpec(spec, 2))
+		require.False(t, ok)
+	})
+}
+
+// manifestWithConditionAndSource builds a manifest with one condition (map-shaped spec, with
+// the given "value") and one source (map-shaped spec, with the given "name"), matching the
+// shape the "helmfile" crawler generates: a condition checking the raw chart identity (e.g.
+// "jenkins-infra/rsyncd") and a source resolved against the chart's own short name (e.g.
+// "rsyncd").
+func manifestWithConditionAndSource(conditionValue, sourceName string) config.Spec {
+	manifest := newManifestWithSourceSpec(map[string]interface{}{"name": sourceName}, 1)
+	manifest.Conditions = map[string]condition.Config{
+		"condition": {
+			ResourceConfig: resource.ResourceConfig{
+				Kind: "yaml",
+				Spec: map[string]interface{}{"value": conditionValue},
+			},
+		},
+	}
+	return manifest
+}
+
+func TestHelmfileChartIdentity(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns the single condition spec's value", func(t *testing.T) {
+		t.Parallel()
+
+		identity, ok := helmfileChartIdentity(manifestWithConditionAndSource("jenkins-infra/rsyncd", "rsyncd"))
+		require.True(t, ok)
+		require.Equal(t, "jenkins-infra/rsyncd", identity)
+	})
+
+	t.Run("no identity with zero or more than one condition", func(t *testing.T) {
+		t.Parallel()
+
+		manifest := manifestWithConditionAndSource("jenkins-infra/rsyncd", "rsyncd")
+
+		manifest.Conditions = nil
+		_, ok := helmfileChartIdentity(manifest)
+		require.False(t, ok)
+
+		manifest = manifestWithConditionAndSource("jenkins-infra/rsyncd", "rsyncd")
+		manifest.Conditions["other"] = manifest.Conditions["condition"]
+		_, ok = helmfileChartIdentity(manifest)
+		require.False(t, ok)
+	})
+}
+
+func TestManifestResourceTitle(t *testing.T) {
+	t.Parallel()
+
+	t.Run("helmfile prefers the chart identity over the release name", func(t *testing.T) {
+		t.Parallel()
+
+		// Two different release names, same chart identity: the title must be identical, or
+		// grouping their pull requests together under "groupby: resource" would still end up
+		// with an arbitrary, release-specific title.
+		titleA, okA := manifestResourceTitle("helmfile", manifestWithConditionAndSource("jenkins-infra/rsyncd", "rsyncd"))
+		titleB, okB := manifestResourceTitle("helmfile", manifestWithConditionAndSource("jenkins-infra/rsyncd", "rsyncd"))
+
+		require.True(t, okA)
+		require.True(t, okB)
+		require.Equal(t, titleA, titleB)
+		require.Contains(t, titleA, "jenkins-infra/rsyncd")
+	})
+
+	t.Run("other crawlers fall back to the resource name", func(t *testing.T) {
+		t.Parallel()
+
+		title, ok := manifestResourceTitle("npm", newManifestWithSourceSpec(map[string]interface{}{"name": "express"}, 1))
+		require.True(t, ok)
+		require.Contains(t, title, "express")
+	})
+
+	t.Run("no title when there is neither a chart identity nor a resource name", func(t *testing.T) {
+		t.Parallel()
+
+		_, ok := manifestResourceTitle("helmfile", newManifestWithSourceSpec(map[string]interface{}{}, 1))
 		require.False(t, ok)
 	})
 }

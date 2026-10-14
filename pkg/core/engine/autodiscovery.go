@@ -109,6 +109,14 @@ func (e *Engine) LoadAutoDiscovery(ctx context.Context, defaultEnabled bool) err
 			}
 		}
 
+		// Captured once, before the loop below starts possibly overwriting actionConfig.Title
+		// on every manifest for "groupby: resource": a user-provided title must stay the same
+		// for every manifest, while an auto-generated one must be recomputed per manifest.
+		userProvidedActionTitle := ""
+		if actionConfig != nil {
+			userProvidedActionTitle = actionConfig.Title
+		}
+
 		c, err := autodiscovery.New(
 			p.Config.Spec.AutoDiscovery, workDir)
 		if err != nil {
@@ -255,6 +263,19 @@ func (e *Engine) LoadAutoDiscovery(ctx context.Context, defaultEnabled bool) err
 								p.Config.Spec.AutoDiscovery.ActionId,
 								defaultActionTitle)
 							actionConfig.Title = defaultActionTitle
+						}
+					}
+
+					if p.Config.Spec.AutoDiscovery.GroupBy == autodiscovery.GROUPBYRESOURCE && userProvidedActionTitle == "" {
+						/*
+							A release name is a per-cluster label that can differ for the exact
+							same resource (e.g. the same Helm chart deployed under a different
+							release name in each cluster), so it must not end up in the title of
+							a pull request that groups every one of those releases together: it
+							would arbitrarily single out whichever manifest happens to run last.
+						*/
+						if title, ok := manifestResourceTitle(crawlerResult.Kind, manifest); ok {
+							actionConfig.Title = title
 						}
 					}
 
@@ -408,6 +429,52 @@ func manifestResourceName(manifest config.Spec) (string, bool) {
 	}
 
 	// unreachable: the len(manifest.Sources) == 1 check above guarantees exactly one iteration
+	return "", false
+}
+
+// helmfileChartIdentity returns the Helm chart identity (e.g. "jenkins-infra/rsyncd") the
+// "helmfile" crawler embeds as the "value" of a discovered manifest's single condition. It
+// returns ok=false when the manifest does not have exactly one condition with a non-empty
+// string "value" in its spec.
+func helmfileChartIdentity(manifest config.Spec) (string, bool) {
+	if len(manifest.Conditions) != 1 {
+		return "", false
+	}
+
+	for _, cond := range manifest.Conditions {
+		specMap, ok := cond.Spec.(map[string]interface{})
+		if !ok {
+			return "", false
+		}
+
+		value, ok := specMap["value"].(string)
+		if !ok || value == "" {
+			return "", false
+		}
+
+		return value, true
+	}
+
+	// unreachable: the len(manifest.Conditions) == 1 check above guarantees exactly one iteration
+	return "", false
+}
+
+// manifestResourceTitle returns a human-readable, stable title fragment for a discovered
+// manifest's resource, used to set a per-resource pull request title with "groupby: resource".
+// It prefers the "helmfile" crawler's Helm chart identity (e.g. "jenkins-infra/rsyncd") over its
+// release name, since the release name is a per-cluster label that can differ for the exact
+// same chart. For any other crawler, it falls back to the resource's own name.
+func manifestResourceTitle(crawlerKind string, manifest config.Spec) (string, bool) {
+	if crawlerKind == "helmfile" {
+		if identity, ok := helmfileChartIdentity(manifest); ok {
+			return fmt.Sprintf("deps(helmfile): update %q Helm chart", identity), true
+		}
+	}
+
+	if name, ok := manifestResourceName(manifest); ok {
+		return fmt.Sprintf("deps: update %q", name), true
+	}
+
 	return "", false
 }
 
