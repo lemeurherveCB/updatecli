@@ -139,9 +139,19 @@ type ActionSpec struct {
 	//   empty
 	//
 	// remark:
-	//   * the labels must already exist on the repository. Other labels are ignored.
+	//   * by default, the labels must already exist on the repository. Other labels are ignored.
+	//   * use "forcelabelcreation" to create missing labels on the repository instead of ignoring them.
 	//
 	Labels []string `yaml:",omitempty"`
+	// "forcelabelcreation" defines whether labels listed in "labels" are created on the repository when they don't already exist.
+	//
+	// default:
+	//   false
+	//
+	// remark:
+	//   * created labels use a default color as GitHub requires one.
+	//
+	ForceLabelCreation bool `yaml:",omitempty"`
 	// "draft" defines whether the pull request is opened as a draft.
 	//
 	// default:
@@ -478,7 +488,7 @@ func (p *PullRequest) CreateAction(ctx context.Context, report *reports.Action, 
 
 	// Once the remote Pull Request exists, we can than update it with additional information such as
 	// tags,assignee,etc.
-	if err := p.updatePullRequest(ctx, 0); err != nil {
+	if err := p.updatePullRequest(ctx, report, 0); err != nil {
 		return err
 	}
 
@@ -575,7 +585,7 @@ func (p *PullRequest) closePullRequest(ctx context.Context, retry int) error {
 }
 
 // updatePullRequest updates an existing Pull Request.
-func (p *PullRequest) updatePullRequest(ctx context.Context, retry int) error {
+func (p *PullRequest) updatePullRequest(ctx context.Context, report *reports.Action, retry int) error {
 
 	rateLimit, err := queryRateLimit(p.gh.client, ctx)
 	if err != nil {
@@ -584,7 +594,7 @@ func (p *PullRequest) updatePullRequest(ctx context.Context, retry int) error {
 			if retry < client.MaxRetry {
 				logrus.Warningf("GitHub API rate limit exceeded. Retrying... (%d/%d)", retry+1, client.MaxRetry)
 				rateLimit.Pause()
-				return p.updatePullRequest(ctx, retry+1)
+				return p.updatePullRequest(ctx, report, retry+1)
 			}
 			return errors.New(ErrAPIRateLimitExceededFinalAttempt)
 		}
@@ -633,11 +643,24 @@ func (p *PullRequest) updatePullRequest(ctx context.Context, retry int) error {
 		return err
 	}
 
-	matchingLabels := []repositoryLabelApi{}
-	for _, l := range p.spec.Labels {
-		for _, repoLabel := range repositoryLabels {
-			if l == repoLabel.Name {
-				matchingLabels = append(matchingLabels, repoLabel)
+	matchingLabels, missingLabels := matchLabels(p.spec.Labels, repositoryLabels)
+
+	if len(missingLabels) > 0 && !p.spec.ForceLabelCreation {
+		logrus.Debugf("Label(s) %q do not exist on repository %s/%s, skipping them", missingLabels, p.gh.Spec.Owner, p.gh.Spec.Repository)
+	}
+
+	if p.spec.ForceLabelCreation {
+		for _, l := range missingLabels {
+			createdLabel, err := p.gh.createLabel(ctx, p.repository.ID, l, 0)
+			if err != nil {
+				logrus.Errorf("Error creating label %q: %s", l, err.Error())
+				continue
+			}
+
+			logrus.Infof("Label %q created on repository %s/%s", l, p.gh.Spec.Owner, p.gh.Spec.Repository)
+			matchingLabels = append(matchingLabels, createdLabel)
+			if report != nil {
+				report.CreatedLabels = append(report.CreatedLabels, l)
 			}
 		}
 	}
@@ -692,7 +715,7 @@ func (p *PullRequest) updatePullRequest(ctx context.Context, retry int) error {
 	err = p.gh.client.Mutate(ctx, &mutation, input, nil)
 	if err != nil {
 		if strings.Contains(err.Error(), ErrAPIRateLimitExceeded) && retry < client.MaxRetry {
-			return p.updatePullRequest(ctx, retry+1)
+			return p.updatePullRequest(ctx, report, retry+1)
 		}
 		return fmt.Errorf("updating pull request: %w", err)
 	}
