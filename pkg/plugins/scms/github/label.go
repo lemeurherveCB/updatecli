@@ -72,17 +72,21 @@ type repositoryLabelApi struct {
 const defaultLabelColor = "ededed"
 
 // createLabel creates a new label on the repository identified by repositoryID using the GitHub v4 API.
-func (g *Github) createLabel(ctx context.Context, repositoryID, name string, retry int) (repositoryLabelApi, error) {
+func (g *Github) createLabel(ctx context.Context, repositoryID, name, color string, retry int) (repositoryLabelApi, error) {
 	var mutation struct {
 		CreateLabel struct {
 			Label labelNode
 		} `graphql:"createLabel(input: $input)"`
 	}
 
+	if color == "" {
+		color = defaultLabelColor
+	}
+
 	input := githubv4.CreateLabelInput{
 		RepositoryID: githubv4.ID(repositoryID),
 		Name:         githubv4.String(name),
-		Color:        githubv4.String(defaultLabelColor),
+		Color:        githubv4.String(color),
 	}
 
 	err := g.client.Mutate(ctx, &mutation, input, nil)
@@ -97,7 +101,7 @@ func (g *Github) createLabel(ctx context.Context, repositoryID, name string, ret
 			if retry < client.MaxRetry {
 				logrus.Warningf("GitHub API rate limit exceeded. Retrying... (%d/%d)", retry+1, client.MaxRetry)
 				rateLimit.Pause()
-				return g.createLabel(ctx, repositoryID, name, retry+1)
+				return g.createLabel(ctx, repositoryID, name, color, retry+1)
 			}
 			return repositoryLabelApi{}, errors.New(ErrAPIRateLimitExceededFinalAttempt)
 		}

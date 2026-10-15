@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -32,6 +33,9 @@ const (
 	MergeStrategyManual     string = "manual"
 	DefaultMergeClientAfter string = "24h"
 )
+
+// hexColorPattern validates the 6 character hex color code expected by "labelcolor".
+var hexColorPattern = regexp.MustCompile(`^[0-9a-fA-F]{6}$`)
 
 var (
 	// ErrAutomergeNotAllowOnRepository is returned when automerge is not allowed on the repository
@@ -152,6 +156,15 @@ type ActionSpec struct {
 	//   * created labels use a default color as GitHub requires one.
 	//
 	ForceLabelCreation bool `yaml:",omitempty"`
+	// "labelcolor" defines the color used for labels created via "forcelabelcreation".
+	//
+	// default:
+	//   ededed
+	//
+	// remark:
+	//   * the value is a 6 character hex color code, without the leading "#".
+	//
+	LabelColor string `yaml:",omitempty"`
 	// "draft" defines whether the pull request is opened as a draft.
 	//
 	// default:
@@ -270,6 +283,10 @@ func (s *ActionSpec) Validate() error {
 		// valid
 	default:
 		return fmt.Errorf("invalid merge strategy %q, accepting one of '%s', '%s', '%s', or ''", s.Merge.Strategy, MergeStrategyClient, MergeStrategyAuto, MergeStrategyManual)
+	}
+
+	if s.LabelColor != "" && !hexColorPattern.MatchString(s.LabelColor) {
+		return fmt.Errorf("invalid labelcolor %q, expecting a 6 character hex color code without the leading '#'", s.LabelColor)
 	}
 
 	return nil
@@ -651,7 +668,7 @@ func (p *PullRequest) updatePullRequest(ctx context.Context, report *reports.Act
 
 	if p.spec.ForceLabelCreation {
 		for _, l := range missingLabels {
-			createdLabel, err := p.gh.createLabel(ctx, p.repository.ID, l, 0)
+			createdLabel, err := p.gh.createLabel(ctx, p.repository.ID, l, p.spec.LabelColor, 0)
 			if err != nil {
 				logrus.Errorf("Error creating label %q: %s", l, err.Error())
 				continue
