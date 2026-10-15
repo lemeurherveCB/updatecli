@@ -271,6 +271,12 @@ func (config *Config) Reset() {
 	}
 }
 
+// Filename returns the manifest full file path, or an empty string for manifests
+// Updatecli generates in memory rather than reads from disk.
+func (config *Config) Filename() string {
+	return config.filename
+}
+
 // BaseDir returns the directory the relative paths of this manifest resolve against.
 //
 // An empty value, the default, means they resolve against the process working directory.

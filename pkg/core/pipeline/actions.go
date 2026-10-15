@@ -195,6 +195,9 @@ func (p *Pipeline) RunActions(ctx context.Context) error {
 		if !action.Config.DisablePipelineURL {
 			action.Report.UpdatePipelineURL()
 		}
+		if !action.Config.DisableManifestURL {
+			action.Report.UpdateManifestURL(p.Config.Filename())
+		}
 		if isBranchReset {
 			logrus.Warningf("Git branch reset detected, the action must reset previous action description")
 		}

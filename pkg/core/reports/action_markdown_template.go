@@ -34,4 +34,9 @@ Target ID: ` + "`" + `{{ .ID }}` + "`" + `
 {{- if .PipelineURL }}
 
 Pipeline URL: [{{ .PipelineURL.Name }}]({{ .PipelineURL.URL }})
+{{- end}}
+
+{{- if .ManifestURL }}
+
+Manifest: [{{ .ManifestURL.Name }}]({{ .ManifestURL.URL }})
 {{- end}}`

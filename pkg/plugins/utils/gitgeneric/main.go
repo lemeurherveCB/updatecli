@@ -1114,6 +1114,21 @@ func (g GoGit) PushTag(tag string, username string, password string, workingDir 
 	return nil
 }
 
+// RepositoryRoot returns the root directory of the git repository containing workingDir.
+func (g GoGit) RepositoryRoot(workingDir string) (string, error) {
+	gitRepository, err := git.PlainOpenWithOptions(workingDir, &git.PlainOpenOptions{DetectDotGit: true})
+	if err != nil {
+		return "", fmt.Errorf("opening %q git directory: %w", workingDir, err)
+	}
+
+	worktree, err := gitRepository.Worktree()
+	if err != nil {
+		return "", fmt.Errorf("opening %q git worktree: %w", workingDir, err)
+	}
+
+	return worktree.Filesystem.Root(), nil
+}
+
 // RemoteURLs returns the list of remote URLs
 func (g GoGit) RemoteURLs(workingDir string) (map[string]string, error) {
 	remoteList := make(map[string]string)

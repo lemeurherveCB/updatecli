@@ -70,6 +70,14 @@ type Config struct {
 		* Only available for GitHub Action, GitLab, Jenkins
 	*/
 	DisablePipelineURL bool `yaml:",omitempty"`
+	/*
+		disablemanifesturl defines if a permalink to the updatecli manifest responsible for this action
+		should be added to the report.
+
+		remarks:
+		* Only available when the manifest's git repository remote is hosted on GitHub, GitLab, Bitbucket (Cloud or Server/Data Center), or Azure DevOps
+	*/
+	DisableManifestURL bool `yaml:",omitempty"`
 }
 
 // Action is a struct used by an updatecli pipeline.

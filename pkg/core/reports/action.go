@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/template"
@@ -11,6 +12,8 @@ import (
 	"github.com/Masterminds/semver/v3"
 	"github.com/sirupsen/logrus"
 	"github.com/updatecli/updatecli/pkg/plugins/utils/ci"
+	"github.com/updatecli/updatecli/pkg/plugins/utils/gitgeneric"
+	"github.com/updatecli/updatecli/pkg/plugins/utils/permalink"
 )
 
 // Action is a struct used to store the result of an action. It is used to generate pullrequest body
@@ -27,6 +30,9 @@ type Action struct {
 	Targets []ActionTarget `xml:"details,omitempty" json:"targets,omitempty"`
 	// using a pointer to avoid empty tag
 	PipelineURL *PipelineURL `xml:"a,omitempty" json:"pipelineURL,omitempty"`
+	// ManifestURL is a permalink to the updatecli manifest responsible for this action, using a
+	// pointer to avoid empty tag
+	ManifestURL *ManifestURL `xml:"manifest,omitempty" json:"manifestURL,omitempty"`
 	// Link is the URL of the action
 	Link string `xml:"link,omitempty" json:"actionUrl,omitempty"`
 }
@@ -44,6 +50,14 @@ type PipelineURL struct {
 	// URL is the URL of the pipeline
 	URL string `xml:"href,attr"`
 	// Name is the name of the pipeline
+	Name string `xml:",chardata"`
+}
+
+// ManifestURL is a struct used to store a permalink to the manifest responsible for an action
+type ManifestURL struct {
+	// URL is the permalink to the manifest file
+	URL string `xml:"href,attr"`
+	// Name is the display name for the manifest URL, such as its path relative to its git repository
 	Name string `xml:",chardata"`
 }
 
@@ -184,5 +198,73 @@ func (a *Action) UpdatePipelineURL() {
 	a.PipelineURL = &PipelineURL{
 		Name: detectedCi.Name(),
 		URL:  detectedCi.URL(),
+	}
+}
+
+// UpdateManifestURL analyzes the git repository containing manifestFilename to build a permalink
+// to it at its current commit, when the git remote points at a forge whose permalink format is known.
+func (a *Action) UpdateManifestURL(manifestFilename string) {
+	if manifestFilename == "" {
+		return
+	}
+
+	absManifestFilename, err := filepath.Abs(manifestFilename)
+	if err != nil {
+		logrus.Debugf("resolving absolute path for manifest %q: %s", manifestFilename, err)
+		return
+	}
+	// Resolve symlinks so the manifest path shares the same canonical form as the
+	// repository root reported by go-git below (e.g. /var vs /private/var on macOS).
+	if resolved, err := filepath.EvalSymlinks(absManifestFilename); err == nil {
+		absManifestFilename = resolved
+	}
+	manifestDir := filepath.Dir(absManifestFilename)
+
+	gitHandler := gitgeneric.GoGit{}
+
+	// The manifest may live in a subdirectory of its git repository, so the repository
+	// root, rather than the manifest's own directory, must be used to open the repository.
+	repositoryRoot, err := gitHandler.RepositoryRoot(manifestDir)
+	if err != nil {
+		logrus.Debugf("no git repository root found for manifest %q: %s", manifestFilename, err)
+		return
+	}
+
+	remotes, err := gitHandler.RemoteURLs(repositoryRoot)
+	if err != nil || len(remotes) == 0 {
+		logrus.Debugf("no git remote found for manifest %q: %s", manifestFilename, err)
+		return
+	}
+
+	remoteURL, ok := remotes[gitgeneric.DefaultRemoteReferenceName]
+	if !ok {
+		for _, u := range remotes {
+			remoteURL = u
+			break
+		}
+	}
+
+	commitHash, err := gitHandler.GetLatestCommitHash(repositoryRoot)
+	if err != nil {
+		logrus.Debugf("no git commit found for manifest %q: %s", manifestFilename, err)
+		return
+	}
+
+	relativePath, err := filepath.Rel(repositoryRoot, absManifestFilename)
+	if err != nil {
+		logrus.Debugf("computing manifest %q path relative to repository root %q: %s", manifestFilename, repositoryRoot, err)
+		return
+	}
+	relativePath = filepath.ToSlash(relativePath)
+
+	manifestURL, ok := permalink.New(remoteURL, commitHash, relativePath)
+	if !ok {
+		logrus.Debugf("unknown git forge for remote %q, skipping manifest permalink", remoteURL)
+		return
+	}
+
+	a.ManifestURL = &ManifestURL{
+		Name: relativePath,
+		URL:  manifestURL,
 	}
 }
